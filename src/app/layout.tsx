@@ -6,35 +6,35 @@ import "./globals.css";
 import type { ReactNode } from "react";
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+	variable: "--font-geist-mono",
+	subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: "Cryptonite",
+	title: "Cryptonite",
 };
 
 export default function RootLayout({
-  children,
+	children,
 }: Readonly<{
-  children: ReactNode;
+	children: ReactNode;
 }>) {
-  return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${geistMono.variable}`}>
-        <QueryProvider>
-          <ThemeProvider
-            themes={["dark", "light"]}
-            defaultTheme="dark"
-            enableSystem
-            storageKey="theme"
-            disableTransitionOnChange
-            enableColorScheme
-          >
-            {children}
-          </ThemeProvider>
-        </QueryProvider>
-      </body>
-    </html>
-  );
+	return (
+		<html lang="en" suppressHydrationWarning>
+			<body className={`${geistMono.variable}`}>
+				<QueryProvider>
+					<ThemeProvider
+						themes={["dark", "light"]}
+						defaultTheme="dark"
+						enableSystem
+						storageKey="theme"
+						disableTransitionOnChange
+						enableColorScheme
+					>
+						{children}
+					</ThemeProvider>
+				</QueryProvider>
+			</body>
+		</html>
+	);
 }
