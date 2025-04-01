@@ -23,10 +23,16 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistMono.variable}`}>
         <QueryProvider>
-          <ThemeProvider>
+          <ThemeProvider
+            themes={["dark", "light"]}
+            defaultTheme="dark"
+            enableSystem
+            storageKey="theme"
+            disableTransitionOnChange
+            enableColorScheme
+          >
             {children}
           </ThemeProvider>
-
         </QueryProvider>
       </body>
     </html>
