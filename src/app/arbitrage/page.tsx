@@ -109,7 +109,11 @@ function ArbitragePage() {
 									tickMargin={10}
 									axisLine={false}
 								/>
-								<YAxis dataKey={"price"} domain={[0, 10_000_000_000]} />
+								<YAxis
+									tickFormatter={(value) => value / 1_000_000_000}
+									dataKey={"price"}
+									domain={[0, 10_000_000_000]}
+								/>
 								<ChartTooltip
 									cursor={false}
 									content={<ChartTooltipContent hideLabel />}
