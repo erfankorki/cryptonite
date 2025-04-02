@@ -9,11 +9,15 @@
 		"lint": "next lint",
 		"prepare": "husky"
 	},
+	"overrides": {
+		"react-is": "^19.0.0-rc-69d4b800-20241021"
+	},
 	"dependencies": {
 		"@tanstack/react-query": "^5.71.1",
 		"@tanstack/react-query-devtools": "^5.71.1",
 		"@tanstack/react-table": "^8.21.2",
 		"arktype": "^2.1.16",
+		"big.js": "^6.2.2",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"dexie": "^4.0.11",
@@ -39,6 +43,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "1.9.4",
 		"@tailwindcss/postcss": "^4",
+		"@types/big.js": "^6.2.2",
 		"@types/node": "^20",
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
