@@ -1,0 +1,17 @@
+[package]
+name = "cryptonite"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1.44"
+anyhow = "1.0.104"
+thiserror = "2.0.20"
+config = "0.15.25"
+chrono = { version = "0.4.45", features = ["serde"] }
+diesel = { version = "2.3.12", features = ["postgres", "chrono", "uuid"] }
+uuid = { version = "1.26.0", features = ["v4", "serde"] }
+reqwest = { version = "0.13.4", features = ["json"] }
+ratatui = "0.30.2"
+rust_decimal = { version = "1.43.0", features = ["serde", "db-diesel-postgres"] }
