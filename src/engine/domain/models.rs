@@ -1,5 +1,9 @@
 //! Exchange domain models.
 
+use rust_decimal::Decimal;
+use uuid::{Uuid};
+
+#[derive(PartialEq, Eq)]
 pub enum ExchangeName {
     Nobitex,
     Wallex,
@@ -11,12 +15,30 @@ pub struct Exchange {
 }
 
 pub struct Wallet {
-    pub exchange: Exchange,
+    pub exchange: ExchangeName,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum OrderSide {
+    Buy,
+    Sell,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum OrderStatus {
+    Ongoing,
+    Filled,
+    Cancelled,
 }
 
 pub struct Order {
-    pub exchange: Exchange,
+    pub id: Uuid,
+    pub exchange: ExchangeName,
     pub market: Market,
+    pub side: OrderSide,
+    pub quantity: Decimal,
+    pub price: Decimal,
+    pub status: OrderStatus,
 }
 
 pub struct Coin {
@@ -24,6 +46,17 @@ pub struct Coin {
 }
 
 pub struct Market {
-    pub src: Coin,
-    pub dst: Coin,
+    pub base: Coin,
+    pub quote: Coin,
+}
+
+pub struct OrderBookItem {
+    pub price: Decimal,
+    pub quantity: Decimal,
+}
+
+pub struct OrderBook {
+    pub market: Market,
+    pub bids: Vec<OrderBookItem>,
+    pub asks: Vec<OrderBookItem>,
 }

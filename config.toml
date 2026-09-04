@@ -1,0 +1,4 @@
+[exchanges]
+nobitex = "https://apiv2.nobitex.ir/"
+wallex = "https://api.wallex.ir/"
+bitpin = "https://api.bitpin.ir/"
