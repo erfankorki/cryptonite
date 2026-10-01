@@ -3,7 +3,7 @@
 use rust_decimal::Decimal;
 use uuid::{Uuid};
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub enum ExchangeName {
     Nobitex,
     Wallex,
@@ -41,20 +41,24 @@ pub struct Order {
     pub status: OrderStatus,
 }
 
+#[derive(Debug, Clone)]
 pub struct Coin {
     pub symbol: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct Market {
     pub base: Coin,
     pub quote: Coin,
 }
 
+#[derive(Debug, Clone)]
 pub struct OrderBookItem {
     pub price: Decimal,
     pub quantity: Decimal,
 }
 
+#[derive(Debug, Clone)]
 pub struct OrderBook {
     pub market: Market,
     pub bids: Vec<OrderBookItem>,

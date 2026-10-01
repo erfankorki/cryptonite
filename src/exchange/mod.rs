@@ -2,6 +2,7 @@
 
 mod clients;
 mod error;
+mod helper;
 mod market_data;
 
 pub use clients::{BitpinClient, NobitexClient, WallexClient};
