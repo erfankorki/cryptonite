@@ -1,0 +1,4 @@
+# Short aliases: `cargo balances`, `cargo balances-amounts`.
+[alias]
+balances = "run -- balances"
+balances-amounts = "run -- balances --amounts"

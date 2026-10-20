@@ -1,13 +1,26 @@
 //! Nobitex account API (https://apidocs.nobitex.ir).
 //!
-//! Auth: `Authorization: Token <token>`; the token goes in `api_key`.
+//! Two ways to authenticate, chosen by which credentials are configured:
+//!
+//! * **API key** (`api_key` = public key, `api_secret` = private key): every
+//!   request is signed with Ed25519 and carries `Nobitex-Key`,
+//!   `Nobitex-Signature` and `Nobitex-Timestamp`. The signed text is
+//!   `timestamp + METHOD + full_path + raw_body`. Recommended: the key can be
+//!   limited to `READ` / `TRADE` permissions and an IP whitelist.
+//! * **Login token** (only `api_key`): `Authorization: Token <token>`.
 
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use reqwest::header::AUTHORIZATION;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+use base64::{Engine, alphabet};
+use ed25519_dalek::{Signer, SigningKey};
+use reqwest::Method;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::config::Secret;
 use crate::engine::domain::models::{Balance, OrderInfo, OrderRequest, OrderStatus};
 use crate::exchange::clients::NobitexClient;
 use crate::exchange::decode::{Flex, read_json, validate_id};
@@ -17,6 +30,16 @@ use crate::exchange::helper::join_url;
 use super::{Account, side_lower};
 
 const CLIENT_ORDER_ID_MAX_LEN: usize = 32;
+
+/// Nobitex asks bots to identify themselves with `TraderBot/<name-version>`.
+const BOT_USER_AGENT: &str = concat!("TraderBot/Cryptonite-", env!("CARGO_PKG_VERSION"));
+
+/// URL-safe base64 as used by Nobitex keys and signatures: padded on output,
+/// padding optional on input.
+const KEY_ENGINE: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::URL_SAFE,
+    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 /// Nobitex calls the Iranian rial `rls`; the domain uses `IRT` everywhere.
 fn to_nobitex_currency(symbol: &str) -> String {
@@ -45,26 +68,79 @@ fn map_status(status: &str) -> Result<OrderStatus, ExchangeError> {
 }
 
 impl NobitexClient {
-    fn auth_value(&self) -> Result<String, ExchangeError> {
+    /// Sends one authenticated request.
+    ///
+    /// `body` is the exact JSON text to send: with API-key auth that same text
+    /// is signed, so it must not be re-serialized afterwards.
+    async fn send(
+        &self,
+        client: &reqwest::Client,
+        method: Method,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<reqwest::Response, ExchangeError> {
         let credentials = self
             .credentials
             .as_ref()
             .ok_or(ExchangeError::MissingCredentials("nobitex"))?;
-        Ok(format!("Token {}", credentials.api_key.expose()))
-    }
+        let raw_body = body.unwrap_or_default();
+        let mut request = client
+            .request(method.clone(), join_url(&self.base_url, path))
+            .header(USER_AGENT, BOT_USER_AGENT);
 
-    fn url(&self, path: &str) -> String {
-        join_url(&self.base_url, path)
+        request = match &credentials.api_secret {
+            Some(secret) => {
+                let timestamp = unix_timestamp()?;
+                let full_path = format!("/{}", path.trim_start_matches('/'));
+                let signature = sign_request(secret, &timestamp, method.as_str(), &full_path, &raw_body)?;
+                request
+                    .header("Nobitex-Key", credentials.api_key.expose())
+                    .header("Nobitex-Signature", signature)
+                    .header("Nobitex-Timestamp", timestamp)
+            }
+            None => request.header(AUTHORIZATION, format!("Token {}", credentials.api_key.expose())),
+        };
+
+        if !raw_body.is_empty() {
+            request = request.header(CONTENT_TYPE, "application/json").body(raw_body);
+        }
+        Ok(request.send().await?)
     }
+}
+
+fn unix_timestamp() -> Result<String, ExchangeError> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ExchangeError::Auth("system clock is before 1970".into()))?
+        .as_secs();
+    Ok(seconds.to_string())
+}
+
+/// Ed25519 signature over `timestamp + METHOD + full_path + raw_body`,
+/// URL-safe base64 encoded. `secret` is the key's 32-byte private key in
+/// URL-safe base64, as returned once when the API key is created.
+fn sign_request(
+    secret: &Secret,
+    timestamp: &str,
+    method: &str,
+    full_path: &str,
+    raw_body: &str,
+) -> Result<String, ExchangeError> {
+    let bytes = KEY_ENGINE
+        .decode(secret.expose().trim())
+        .map_err(|_| ExchangeError::Auth("nobitex api_secret is not valid URL-safe base64".into()))?;
+    let seed: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| ExchangeError::Auth("nobitex api_secret must decode to 32 bytes".into()))?;
+
+    let payload = format!("{timestamp}{method}{full_path}{raw_body}");
+    let signature = SigningKey::from_bytes(&seed).sign(payload.as_bytes());
+    Ok(KEY_ENGINE.encode(signature.to_bytes()))
 }
 
 impl Account for NobitexClient {
     async fn get_balances(&self, client: &reqwest::Client) -> Result<Vec<Balance>, ExchangeError> {
-        let response = client
-            .get(self.url("v2/wallets"))
-            .header(AUTHORIZATION, self.auth_value()?)
-            .send()
-            .await?;
+        let response = self.send(client, Method::GET, "v2/wallets", None).await?;
         let body: WalletsResponse = read_json(response).await?;
         ensure_ok(&body.status, None, None)?;
 
@@ -99,11 +175,8 @@ impl Account for NobitexClient {
             client_order_id: order.client_order_id.clone(),
         };
 
-        let response = client
-            .post(self.url("market/orders/add"))
-            .header(AUTHORIZATION, self.auth_value()?)
-            .json(&body)
-            .send()
+        let response = self
+            .send(client, Method::POST, "market/orders/add", Some(serde_json::to_string(&body)?))
             .await?;
         let parsed: OrderResponse = read_json(response).await?;
         parsed.into_info()
@@ -115,11 +188,8 @@ impl Account for NobitexClient {
         order_id: &str,
     ) -> Result<OrderInfo, ExchangeError> {
         let body = StatusBody { id: parse_order_id(order_id)? };
-        let response = client
-            .post(self.url("market/orders/status"))
-            .header(AUTHORIZATION, self.auth_value()?)
-            .json(&body)
-            .send()
+        let response = self
+            .send(client, Method::POST, "market/orders/status", Some(serde_json::to_string(&body)?))
             .await?;
         let parsed: OrderResponse = read_json(response).await?;
         parsed.into_info()
@@ -131,11 +201,13 @@ impl Account for NobitexClient {
         order_id: &str,
     ) -> Result<(), ExchangeError> {
         let body = CancelBody { order: parse_order_id(order_id)?, status: "canceled" };
-        let response = client
-            .post(self.url("market/orders/update-status"))
-            .header(AUTHORIZATION, self.auth_value()?)
-            .json(&body)
-            .send()
+        let response = self
+            .send(
+                client,
+                Method::POST,
+                "market/orders/update-status",
+                Some(serde_json::to_string(&body)?),
+            )
             .await?;
         let parsed: AckResponse = read_json(response).await?;
         ensure_ok(&parsed.status, parsed.code.as_deref(), parsed.message.as_deref())
@@ -246,11 +318,110 @@ mod tests {
     use rust_decimal::Decimal;
     use serde_json::json;
     use wiremock::matchers::{body_json, header, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     use super::*;
     use crate::engine::domain::models::{Coin, Market, OrderSide};
-    use crate::exchange::test_support::{settings_for, settings_without_credentials};
+    use crate::exchange::test_support::{
+        settings_for, settings_with_nobitex_api_key, settings_without_credentials,
+    };
+
+    /// Matches requests whose `Nobitex-Signature` is a valid Ed25519 signature,
+    /// by `verifying_key`, of the timestamp, method, path+query and exact body.
+    fn valid_signature(verifying_key: VerifyingKey) -> impl Fn(&Request) -> bool + Send + Sync + 'static {
+        move |request: &Request| {
+            let header = |name: &str| {
+                request
+                    .headers
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned)
+            };
+            let (Some(timestamp), Some(signature)) =
+                (header("nobitex-timestamp"), header("nobitex-signature"))
+            else {
+                return false;
+            };
+            let Ok(bytes) = KEY_ENGINE.decode(&signature) else {
+                return false;
+            };
+            let Ok(signature) = Signature::from_slice(&bytes) else {
+                return false;
+            };
+            let full_path = match request.url.query() {
+                Some(query) => format!("{}?{query}", request.url.path()),
+                None => request.url.path().to_owned(),
+            };
+            let payload = format!(
+                "{timestamp}{}{full_path}{}",
+                request.method.as_str(),
+                String::from_utf8_lossy(&request.body)
+            );
+            verifying_key.verify(payload.as_bytes(), &signature).is_ok()
+        }
+    }
+
+    #[test]
+    fn signature_matches_python_reference_vector() {
+        // Generated with python `cryptography` using the algorithm from the Nobitex docs.
+        let secret = Secret::new("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
+        let signature =
+            sign_request(&secret, "1700000000", "POST", "/market/orders/add", r#"{"a":1}"#).unwrap();
+        assert_eq!(
+            signature,
+            "B7Xx_3sYOuz56y4c1dh0OiGe_Cw3-e8YPTGK1YzbJQNVWFycpftrGYXcXLFES3teuBpJpMldrRhgxpjVvBAkAg=="
+        );
+    }
+
+    #[test]
+    fn malformed_private_keys_are_rejected_without_leaking_them() {
+        for bad in ["not base64 !!", "AAEC"] {
+            let err = sign_request(&Secret::new(bad), "1", "GET", "/x", "").unwrap_err();
+            assert!(matches!(err, ExchangeError::Auth(_)));
+            assert!(!err.to_string().contains(bad));
+        }
+    }
+
+    #[tokio::test]
+    async fn api_key_mode_signs_get_and_post_requests() {
+        let seed = [7u8; 32];
+        let verifying_key = SigningKey::from_bytes(&seed).verifying_key();
+        let settings =
+            settings_with_nobitex_api_key("http://placeholder", "pub-key", &KEY_ENGINE.encode(seed));
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/wallets"))
+            .and(header("nobitex-key", "pub-key"))
+            .and(valid_signature(verifying_key))
+            .and(|request: &Request| !request.headers.contains_key("authorization"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "ok", "wallets": {"USDT": {"balance": "2", "blocked": "0"}}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/market/orders/add"))
+            .and(header("nobitex-key", "pub-key"))
+            .and(valid_signature(verifying_key))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "ok", "order": {"id": 1, "status": "Active", "matchedAmount": 0}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut settings = settings;
+        settings.exchanges.nobitex = server.uri();
+        let nobitex = NobitexClient::from_settings(&settings);
+        let http = reqwest::Client::new();
+
+        let balances = nobitex.get_balances(&http).await.unwrap();
+        assert_eq!(balances[0].currency, "USDT");
+        nobitex.place_order(&http, &usdt_irt_buy()).await.unwrap();
+    }
 
     fn usdt_irt_buy() -> OrderRequest {
         OrderRequest {

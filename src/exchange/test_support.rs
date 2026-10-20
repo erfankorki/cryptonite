@@ -33,3 +33,13 @@ pub fn settings_without_credentials(base_url: &str) -> Settings {
         ..settings_for(base_url)
     }
 }
+
+/// Like `settings_for`, but Nobitex uses API-key (signed) authentication.
+pub fn settings_with_nobitex_api_key(base_url: &str, public_key: &str, private_key: &str) -> Settings {
+    let mut settings = settings_for(base_url);
+    settings.credentials.nobitex = Some(ExchangeCredentials {
+        api_key: Secret::new(public_key),
+        api_secret: Some(Secret::new(private_key)),
+    });
+    settings
+}
