@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Instant;
 
 use rust_decimal::Decimal;
 use serde::Deserialize;
+use tokio::sync::Mutex;
 
-use crate::config::Settings;
+use crate::config::{ExchangeCredentials, Secret, Settings};
 use crate::engine::domain::models::{ExchangeName, Market, OrderBook, OrderBookItem};
 
 use super::error::ExchangeError;
@@ -11,13 +14,15 @@ use super::helper::{join_url, orderbook_path};
 use super::market_data::MarketData;
 
 pub struct NobitexClient {
-    base_url: String,
+    pub(super) base_url: String,
+    pub(super) credentials: Option<ExchangeCredentials>,
 }
 
 impl NobitexClient {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
             base_url: settings.exchanges.nobitex.clone(),
+            credentials: settings.credentials.nobitex.clone(),
         }
     }
 }
@@ -44,13 +49,15 @@ impl MarketData for NobitexClient {
 }
 
 pub struct WallexClient {
-    base_url: String,
+    pub(super) base_url: String,
+    pub(super) credentials: Option<ExchangeCredentials>,
 }
 
 impl WallexClient {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
             base_url: settings.exchanges.wallex.clone(),
+            credentials: settings.credentials.wallex.clone(),
         }
     }
 }
@@ -76,14 +83,29 @@ impl MarketData for WallexClient {
     }
 }
 
+/// JWT pair obtained from Bitpin's login endpoint.
+pub(super) struct BitpinTokens {
+    pub(super) access: Secret,
+    pub(super) refresh: Secret,
+    pub(super) obtained_at: Instant,
+}
+
 pub struct BitpinClient {
-    base_url: String,
+    pub(super) base_url: String,
+    pub(super) credentials: Option<ExchangeCredentials>,
+    /// Current login tokens; refreshed lazily by the account methods.
+    pub(super) tokens: Mutex<Option<BitpinTokens>>,
+    /// Cache of market code (e.g. `USDT_IRT`) to Bitpin's numeric market id.
+    pub(super) market_ids: Mutex<HashMap<String, u64>>,
 }
 
 impl BitpinClient {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
             base_url: settings.exchanges.bitpin.clone(),
+            credentials: settings.credentials.bitpin.clone(),
+            tokens: Mutex::new(None),
+            market_ids: Mutex::new(HashMap::new()),
         }
     }
 }

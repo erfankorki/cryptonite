@@ -6,4 +6,12 @@ pub enum ExchangeError {
     Api(String),
     #[error("decimal parse error: {0}")]
     Decimal(#[from] rust_decimal::Error),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("no credentials configured for {0}")]
+    MissingCredentials(&'static str),
+    #[error("authentication failed: {0}")]
+    Auth(String),
+    #[error("invalid order: {0}")]
+    InvalidOrder(String),
 }
